@@ -1,0 +1,17 @@
+{
+  "name": "nodeos-reverse-proxy",
+  "version": "0.0.0",
+  "description": "Reverse proxy based on users names",
+  "main": "server.js",
+  "bin": "server.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Jesús Leganés Combarro 'piranna' <piranna@gmail.com>",
+  "license": "ISC",
+  "dependencies": {
+    "basic-auth": "^1.0.3",
+    "finalhandler": "^0.4.0",
+    "http-proxy": "^1.12.0"
+  }
+}
