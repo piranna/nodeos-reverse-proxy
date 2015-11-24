@@ -1,6 +1,6 @@
 {
   "name": "nodeos-reverse-proxy",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "description": "Reverse proxy based on users names",
   "main": "server.js",
   "bin": "server.js",

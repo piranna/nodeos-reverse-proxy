@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 
+var crypto   = require('crypto')
 var http     = require('http')
 var parse    = require('url').parse
 var spawn    = require('child_process').spawn
-var statSync = require('fs').statSync
+var stat     = require('fs').stat
 
 var basicAuth         = require('basic-auth')
 var createProxyServer = require('http-proxy').createProxyServer
@@ -21,109 +22,122 @@ function getAuth(req)
   var auth = parse(req.url).auth
   if(auth)
   {
-    // Get user and passwrod
+    // Get name and pass
     var pass = auth.split(':')
-    var user = pass.shift()
+    var name = pass.shift()
     pass = pass.join(':')
 
-    return {user: user, pass: pass}
+    return {name: name, pass: pass}
   }
 
   // Header
   return basicAuth(req)
 }
 
-function validateUser(auth)
+function validateUser(auth, callback)
 {
   // Get user's $HOME directory
-  var home = '/home/'+auth.user
+  var home = '/home/'+auth.name
 
-  try
+  stat(home, function(error, statsHome)
   {
-    var statsHome = statSync(home)
-  }
-  catch(error)
-  {
-    return error
-  }
+    if(error) return callback(error)
 
-  // Get user's logon configuration
-  var logon = home+'/etc/logon.json'
+    // Get user's logon configuration
+    var logon = home+'/etc/logon.json'
 
-  var stats = statSync(logon)
+    stat(logon, function(error, stats)
+    {
+      if(error) return callback(error)
 
-  var uid = stats.uid
-  var gid = stats.gid
+      var uid = stats.uid
+      var gid = stats.gid
 
-  try
-  {
-    if(statsHome.uid !== uid || statsHome.gid !== gid)
-      return home+" uid & gid don't match with its logon config file"
+      try
+      {
+        if(statsHome.uid !== uid || statsHome.gid !== gid)
+          return callback(home+" uid & gid don't match with its logon config file")
 
-    var config = require(logon)
-  }
-  catch(error)
-  {
-    return error
-  }
+        var config = require(logon)
+      }
+      catch(error)
+      {
+        return callback(error)
+      }
 
-  var password = config.password
+      var password = config.password
 
-  // User don't have defined a password, it's a non-interactive account
-  if(typeof password !== 'string')
-    return 'Non-interactive account'
+      // User don't have defined a password, it's a non-interactive account
+      if(typeof password !== 'string')
+        return callback('Non-interactive account')
 
-  // Check if account is password-less (for example, a guest account)
-  // or it's the correct one
-  if(password === ''
-  || password === shasum.update(auth.pass).digest('hex'))
-    return 'Invalid password'
+      // Check if account is password-less (for example, a guest account)
+      // or it's the correct one
+      if(password !== ''
+      && password !== crypto.createHash('sha1').update(auth.pass).digest('hex'))
+        return callback('Invalid password')
+
+      callback(null, {uid: uid, gid: gid, config: config, home: home})
+    })
+  })
 }
 
 function getProxy(auth, callback)
 {
-  var user = auth.user
+  var name = auth.name
 
-  var proxy = user2proxy[user]
+  var proxy = user2proxy[name]
   if(proxy) return callback(null, proxy)
 
-  var error = validateUser(auth)
-  if(error) return callback(error)
-
-  var argv =
-  [
-    uid, gid,
-    config.guiServer,
-    '--hostname', '127.0.0.1',
-    '--command', config.shell
-  ].concat('--', config.shellArgs)
-
-  var cp = spawn(__dirname+'/chrootKexec.js', argv, {cwd: home})
-
-  cp.once('error', callback)
-
-  cp.stdout.once('data', function(data)
+  validateUser(auth, function(error, validation)
   {
-    cp.removeListener('error', callback)
+    if(error) return callback(error)
 
-    var options =
+    var config = validation.config
+
+    var argv =
+    [
+      validation.uid, validation.gid,
+      config.guiServer,
+      '--hostname', '127.0.0.1',
+    ]
+
+    if(config.shell)
+      argv = argv.concat('--command', config.shell, '--', config.shellArgs || [])
+
+    var cp = spawn(__dirname+'/chrootKexec.js', argv, {cwd: validation.home})
+
+    cp.once('error', callback)
+
+    cp.stdout.once('data', function(data)
     {
-      target:
+      cp.removeListener('error', callback)
+
+      var options =
       {
-        host: 'localhost',
-        port: parseInt(data)
+        target:
+        {
+          host: '127.0.0.1',
+          port: parseInt(data.toString())
+        }
       }
-    }
 
-    user2proxy[user] = proxy = createProxyServer(options)
+      user2proxy[name] = proxy = createProxyServer(options)
 
-    cp.on('exit', function()
-    {
-      delete user2proxy[user]
-      proxy.close()
+      cp.on('exit', function(code, signal)
+      {
+        delete user2proxy[name]
+        proxy.close()
+      })
+
+      proxy.on('error', function(error)
+      {
+        delete user2proxy[name]
+        cp.kill('SIGTERM')
+      })
+
+      callback(null, proxy)
     })
-
-    callback(null, proxy)
   })
 }
 
@@ -136,10 +150,10 @@ var server = http.createServer()
 server.on('request', function(req, res)
 {
   var auth = getAuth(req)
-  if(!auth || !auth.user)
+  if(!auth || !auth.name)
   {
     res.statusCode = 401
-    res.setHeader('WWW-Authenticate', 'Basic realm="NodeOS"')
+    res.setHeader('WWW-Authenticate', 'Basic realm="Welcome to NodeOS!"')
 
     return res.end()
   }
@@ -161,7 +175,7 @@ server.on('upgrade', function(req, socket, head)
   var end = socket.end.bind(socket)
 
   var auth = getAuth(req)
-  if(!auth || !auth.user) return end()
+  if(!auth || !auth.name) return end()
 
   getProxy(auth, function(error, proxy)
   {
