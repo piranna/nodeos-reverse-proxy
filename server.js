@@ -37,25 +37,27 @@ function getProxy(user, callback)
   var proxy = user2proxy[user]
   if(proxy) return callback(null, proxy)
 
-  var argv = ['--command', config.command].concat(config.shellArgs)
+  var argv =
+  [
+    uid, gid,
+    'oneshoot',
+    '--hostname', '127.0.0.1',
+    '--command', config.command
+  ].concat('--', config.shellArgs)
 
   var options =
   {
     cwd: '/home/'+user,
-    env:
-    {
-      PATH: '/bin'
-    }
-//    uid:
-//    gid:
   }
 
-  var cp = spawn('oneshoot', argv, options)
+  var cp = spawn(__dirname+'/chrootKexec.js', argv, options)
 
-  cp.on('error', callback)
+  cp.once('error', callback)
 
   cp.stdout.once('data', function(data)
   {
+    cp.removeListener('error', callback)
+
     var options =
     {
       target:
