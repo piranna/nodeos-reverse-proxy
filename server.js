@@ -4,6 +4,7 @@ var http  = require('http')
 var parse = require('url').parse
 var spawn = require('child_process').spawn
 
+var basicAuth         = require('basic-auth')
 var createProxyServer = require('http-proxy').createProxyServer
 var finalhandler      = require('finalhandler')
 
@@ -13,17 +14,22 @@ var port = 80
 
 var user2proxy = {}
 
-function getAuth(url)
+function getAuth(req)
 {
-  var auth = parse(url).auth
-  if(!auth) return
+  // Url
+  var auth = parse(req.url).auth
+  if(auth)
+  {
+    // Get user and passwrod
+    var pass = auth.split(':')
+    var user = pass.shift()
+    pass = pass.join(':')
 
-  // Get user and passwrod
-  var pass = auth.split(':')
-  var user = pass.shift()
-  pass = pass.join(':')
+    return {user: user, pass: pass}
+  }
 
-  return {user: user, pass: pass}
+  // Header
+  return basicAuth(req)
 }
 
 function getProxy(user, callback)
@@ -31,9 +37,11 @@ function getProxy(user, callback)
   var proxy = user2proxy[user]
   if(proxy) return callback(null, proxy)
 
+  var argv = ['--command', config.command].concat(config.shellArgs)
+
   var options =
   {
-    cwd: '/home/nodeos',
+    cwd: '/home/'+user,
     env:
     {
       PATH: '/bin'
@@ -42,7 +50,7 @@ function getProxy(user, callback)
 //    gid:
   }
 
-  var cp = spawn('oneshoot', [], options)
+  var cp = spawn('oneshoot', argv, options)
 
   cp.on('error', callback)
 
@@ -76,14 +84,20 @@ var server = http.createServer()
 // HTTP
 server.on('request', function(req, res)
 {
-  console.log(req.headers)
-  var done = finalhandler(req, res)
+  function realm()
+  {
+    res.statusCode = 401
+    res.setHeader('WWW-Authenticate', 'Basic realm="NodeOS"')
+    res.end()
+  }
 
-  var auth = getAuth(req.url)
-  if(!auth) return done()
+  var auth = getAuth(req)
+  if(!auth) return realm()
 
   var user = auth.user
-  if(!user) return done()
+  if(!user) return realm()
+
+  var done = finalhandler(req, res)
 
   getProxy(user, function(error, proxy)
   {
@@ -97,17 +111,17 @@ server.on('request', function(req, res)
 // WebSockets
 server.on('upgrade', function(req, socket, head)
 {
-  var done = socket.end.bind(socket)
+  var end = socket.end.bind(socket)
 
-  var auth = getAuth(req.url)
-  if(!auth) return done()
+  var auth = getAuth(req)
+  if(!auth) return end()
 
   var user = auth.user
-  if(!user) return done()
+  if(!user) return end()
 
   getProxy(user, function(error, proxy)
   {
-    if(error) return done()
+    if(error) return end(error)
 
     proxy.ws(req, socket, head)
   })
