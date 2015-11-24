@@ -1,15 +1,16 @@
 #!/usr/bin/env node
 
-var http  = require('http')
-var parse = require('url').parse
-var spawn = require('child_process').spawn
+var http     = require('http')
+var parse    = require('url').parse
+var spawn    = require('child_process').spawn
+var statSync = require('fs').statSync
 
 var basicAuth         = require('basic-auth')
 var createProxyServer = require('http-proxy').createProxyServer
 var finalhandler      = require('finalhandler')
 
 
-var port = 80
+var port = process.argv[2] || 80
 
 
 var user2proxy = {}
@@ -32,25 +33,72 @@ function getAuth(req)
   return basicAuth(req)
 }
 
-function getProxy(user, callback)
+function validateUser(auth)
 {
+  // Get user's $HOME directory
+  var home = '/home/'+auth.user
+
+  try
+  {
+    var statsHome = statSync(home)
+  }
+  catch(error)
+  {
+    return error
+  }
+
+  // Get user's logon configuration
+  var logon = home+'/etc/logon.json'
+
+  var stats = statSync(logon)
+
+  var uid = stats.uid
+  var gid = stats.gid
+
+  try
+  {
+    if(statsHome.uid !== uid || statsHome.gid !== gid)
+      return home+" uid & gid don't match with its logon config file"
+
+    var config = require(logon)
+  }
+  catch(error)
+  {
+    return error
+  }
+
+  var password = config.password
+
+  // User don't have defined a password, it's a non-interactive account
+  if(typeof password !== 'string')
+    return 'Non-interactive account'
+
+  // Check if account is password-less (for example, a guest account)
+  // or it's the correct one
+  if(password === ''
+  || password === shasum.update(auth.pass).digest('hex'))
+    return 'Invalid password'
+}
+
+function getProxy(auth, callback)
+{
+  var user = auth.user
+
   var proxy = user2proxy[user]
   if(proxy) return callback(null, proxy)
+
+  var error = validateUser(auth)
+  if(error) return callback(error)
 
   var argv =
   [
     uid, gid,
-    'oneshoot',
+    config.guiServer,
     '--hostname', '127.0.0.1',
-    '--command', config.command
+    '--command', config.shell
   ].concat('--', config.shellArgs)
 
-  var options =
-  {
-    cwd: '/home/'+user,
-  }
-
-  var cp = spawn(__dirname+'/chrootKexec.js', argv, options)
+  var cp = spawn(__dirname+'/chrootKexec.js', argv, {cwd: home})
 
   cp.once('error', callback)
 
@@ -80,28 +128,25 @@ function getProxy(user, callback)
 }
 
 
+// Create server to lister for HTTP and WebSockets connections
 var server = http.createServer()
 
 
 // HTTP
 server.on('request', function(req, res)
 {
-  function realm()
+  var auth = getAuth(req)
+  if(!auth || !auth.user)
   {
     res.statusCode = 401
     res.setHeader('WWW-Authenticate', 'Basic realm="NodeOS"')
-    res.end()
+
+    return res.end()
   }
-
-  var auth = getAuth(req)
-  if(!auth) return realm()
-
-  var user = auth.user
-  if(!user) return realm()
 
   var done = finalhandler(req, res)
 
-  getProxy(user, function(error, proxy)
+  getProxy(auth, function(error, proxy)
   {
     if(error) return done(error)
 
@@ -116,12 +161,9 @@ server.on('upgrade', function(req, socket, head)
   var end = socket.end.bind(socket)
 
   var auth = getAuth(req)
-  if(!auth) return end()
+  if(!auth || !auth.user) return end()
 
-  var user = auth.user
-  if(!user) return end()
-
-  getProxy(user, function(error, proxy)
+  getProxy(auth, function(error, proxy)
   {
     if(error) return end(error)
 
