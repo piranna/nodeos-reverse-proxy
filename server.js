@@ -11,10 +11,13 @@ var createProxyServer = require('http-proxy').createProxyServer
 var finalhandler      = require('finalhandler')
 
 
+const LOCALHOST = '127.0.0.1'
+
 var port = process.argv[2] || 80
 
 
 var user2proxy = {}
+var user2cp = {}
 
 function getAuth(req)
 {
@@ -82,6 +85,51 @@ function validateUser(auth, callback)
   })
 }
 
+
+function startUserServer(argv, cwd, name)
+{
+  function deleteUser2cp()
+  {
+    delete user2cp[name]
+  }
+
+  var cp = spawn(__dirname+'/chrootKexec.js', argv, {cwd: cwd})
+
+  cp.once('error', deleteUser2cp)
+
+  cp.stdout.once('data', function(data)
+  {
+    deleteUser2cp()
+    cp.removeListener('error', deleteUser2cp)
+
+    var options =
+    {
+      target:
+      {
+        host: LOCALHOST,
+        port: parseInt(data.toString())
+      }
+    }
+
+    user2proxy[name] = proxy = createProxyServer(options)
+
+    cp.on('exit', function(code, signal)
+    {
+      delete user2proxy[name]
+      proxy.close()
+    })
+
+    proxy.on('error', function(error)
+    {
+      delete user2proxy[name]
+      cp.kill('SIGTERM')
+    })
+  })
+
+  return cp
+}
+
+
 function getProxy(auth, callback)
 {
   var name = auth.name
@@ -99,42 +147,20 @@ function getProxy(auth, callback)
     [
       validation.uid, validation.gid,
       config.guiServer,
-      '--hostname', '127.0.0.1',
+      '--hostname', LOCALHOST,
     ]
 
     if(config.shell)
       argv = argv.concat('--command', config.shell, '--', config.shellArgs || [])
 
-    var cp = spawn(__dirname+'/chrootKexec.js', argv, {cwd: validation.home})
+    var cp = user2cp[name]
+    if(!cp) user2cp[name] = cp = startUserServer(argv, validation.home, name)
 
     cp.once('error', callback)
 
-    cp.stdout.once('data', function(data)
+    cp.stdout.once('data', function()
     {
       cp.removeListener('error', callback)
-
-      var options =
-      {
-        target:
-        {
-          host: '127.0.0.1',
-          port: parseInt(data.toString())
-        }
-      }
-
-      user2proxy[name] = proxy = createProxyServer(options)
-
-      cp.on('exit', function(code, signal)
-      {
-        delete user2proxy[name]
-        proxy.close()
-      })
-
-      proxy.on('error', function(error)
-      {
-        delete user2proxy[name]
-        cp.kill('SIGTERM')
-      })
 
       callback(null, proxy)
     })
