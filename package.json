@@ -1,6 +1,6 @@
 {
   "name": "nodeos-reverse-proxy",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Reverse proxy based on users names",
   "main": "server.js",
   "bin": "server.js",
@@ -13,7 +13,7 @@
     "basic-auth": "^1.0.3",
     "finalhandler": "^0.4.0",
     "http-proxy": "^1.12.0",
-    "kexec": "piranna/node-kexec#patch-1",
+    "kexec": "^2.0.0",
     "posix": "^2.0.1"
   }
 }
