@@ -13,11 +13,11 @@ var finalhandler      = require('finalhandler')
 
 const LOCALHOST = '127.0.0.1'
 
+
 var port = process.argv[2] || 80
 
+var users = {}
 
-var user2proxy = {}
-var user2cp = {}
 
 function getAuth(req)
 {
@@ -37,10 +37,33 @@ function getAuth(req)
   return basicAuth(req)
 }
 
-function validateUser(auth, callback)
+function checkPassword(password, hash)
 {
+  // User don't have defined a password, it's a non-interactive account
+  if(typeof hash !== 'string') return 'Non-interactive account'
+
+  // Check if account is password-less (for example, a guest account)
+  // or it's the correct one
+  if(hash !== ''
+  && hash !== crypto.createHash('sha1').update(password).digest('hex'))
+    return 'Invalid password'
+}
+
+function getUser(auth, callback)
+{
+  var name = auth.name
+
+  var user = users[name]
+  if(user)
+  {
+    var error = checkPassword(auth.pass, user.config.password)
+    if(error) return callback(error)
+
+    return callback(null, user)
+  }
+
   // Get user's $HOME directory
-  var home = '/home/'+auth.name
+  var home = '/home/'+name
 
   stat(home, function(error, statsHome)
   {
@@ -56,11 +79,11 @@ function validateUser(auth, callback)
       var uid = stats.uid
       var gid = stats.gid
 
+      if(statsHome.uid !== uid || statsHome.gid !== gid)
+        return callback(home+" uid & gid don't match with its logon config file")
+
       try
       {
-        if(statsHome.uid !== uid || statsHome.gid !== gid)
-          return callback(home+" uid & gid don't match with its logon config file")
-
         var config = require(logon)
       }
       catch(error)
@@ -69,100 +92,89 @@ function validateUser(auth, callback)
       }
 
       var password = config.password
+      var error = checkPassword(auth.pass, password)
+      if(error) return callback(error)
 
-      // User don't have defined a password, it's a non-interactive account
-      if(typeof password !== 'string')
-        return callback('Non-interactive account')
+      users[name] = user =
+      {
+        config:   config,
+        gid:      gid,
+        home:     home,
+        password: password,
+        uid:      uid
+      }
 
-      // Check if account is password-less (for example, a guest account)
-      // or it's the correct one
-      if(password !== ''
-      && password !== crypto.createHash('sha1').update(auth.pass).digest('hex'))
-        return callback('Invalid password')
-
-      callback(null, {uid: uid, gid: gid, config: config, home: home})
+      callback(null, user)
     })
   })
 }
 
-
-function startUserServer(argv, cwd, name)
+function startUserServer(user)
 {
-  function deleteUser2cp()
+  var config = user.config
+
+  var argv =
+  [
+    user.uid, user.gid,
+    config.guiServer,
+    '--hostname', LOCALHOST,
+  ]
+
+  if(config.shell)
+    argv = argv.concat('--command', config.shell, '--', config.shellArgs || [])
+
+  user.server = server = spawn(__dirname+'/chrootKexec.js', argv, {cwd: cwd})
+
+  var options =
   {
-    delete user2cp[name]
+    target:
+    {
+      host: LOCALHOST,
+      port: parseInt(data.toString())
+    }
   }
 
-  var cp = spawn(__dirname+'/chrootKexec.js', argv, {cwd: cwd})
+  var proxy = createProxyServer(options)
 
-  cp.once('error', deleteUser2cp)
-
-  cp.stdout.once('data', function(data)
+  server.stdout.once('data', function(data)
   {
-    deleteUser2cp()
-    cp.removeListener('error', deleteUser2cp)
+    user.proxy = proxy
 
-    var options =
+    server.on('exit', function(code, signal)
     {
-      target:
-      {
-        host: LOCALHOST,
-        port: parseInt(data.toString())
-      }
-    }
-
-    user2proxy[name] = proxy = createProxyServer(options)
-
-    cp.on('exit', function(code, signal)
-    {
-      delete user2proxy[name]
+      delete users[name]
       proxy.close()
     })
 
     proxy.on('error', function(error)
     {
-      delete user2proxy[name]
-      cp.kill('SIGTERM')
+      delete users[name]
+      server.kill('SIGTERM')
     })
   })
 
-  return cp
+  return server
 }
-
 
 function getProxy(auth, callback)
 {
-  var name = auth.name
-
-  var proxy = user2proxy[name]
-  if(proxy) return callback(null, proxy)
-
-  validateUser(auth, function(error, validation)
+  getUser(auth, function(error, user)
   {
     if(error) return callback(error)
 
-    var config = validation.config
+    var proxy = user.proxy
+    if(proxy) return callback(null, proxy)
 
-    var argv =
-    [
-      validation.uid, validation.gid,
-      config.guiServer,
-      '--hostname', LOCALHOST,
-    ]
+    var server = user.server
+    if(!server)
+      user.server = server = startUserServer(user)
 
-    if(config.shell)
-      argv = argv.concat('--command', config.shell, '--', config.shellArgs || [])
-
-    var cp = user2cp[name]
-    if(!cp) user2cp[name] = cp = startUserServer(argv, validation.home, name)
-
-    cp.once('error', callback)
-
-    cp.stdout.once('data', function()
+    server.once('error', callback)
+    server.stdout.once('data', function()
     {
-      cp.removeListener('error', callback)
+      server.removeListener('error', callback)
 
-      callback(null, proxy)
+      callback(null, user.proxy)
     })
   })
 }
@@ -184,11 +196,9 @@ server.on('request', function(req, res)
     return res.end()
   }
 
-  var done = finalhandler(req, res)
-
   getProxy(auth, function(error, proxy)
   {
-    if(error) return done(error)
+    if(error) return finalhandler(req, res)(error)
 
     proxy.web(req, res)
   })
