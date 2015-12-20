@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 
-var crypto   = require('crypto')
-var http     = require('http')
-var parse    = require('url').parse
-var spawn    = require('child_process').spawn
-var stat     = require('fs').stat
+var crypto = require('crypto')
+var http   = require('http')
+var parse  = require('url').parse
+var spawn  = require('child_process').spawn
+var stat   = require('fs').stat
 
 var basicAuth         = require('basic-auth')
 var createProxyServer = require('http-proxy').createProxyServer
@@ -40,7 +40,7 @@ function getAuth(req)
 function checkPassword(password, hash)
 {
   // User don't have defined a password, it's a non-interactive account
-  if(typeof hash !== 'string') return 'Non-interactive account'
+  if(typeof hash !== 'string') return 403
 
   // Check if account is password-less (for example, a guest account)
   // or it's the correct one
@@ -97,11 +97,11 @@ function getUser(auth, callback)
 
       users[name] = user =
       {
-        config:   config,
-        gid:      gid,
-        home:     home,
-        password: password,
-        uid:      uid
+        config: config,
+        gid:    gid,
+        home:   home,
+        name:   name,
+        uid:    uid
       }
 
       callback(null, user)
@@ -111,34 +111,30 @@ function getUser(auth, callback)
 
 function startUserServer(user)
 {
-  var config = user.config
-
   var argv =
   [
     user.uid, user.gid,
-    config.guiServer,
+    user.config.guiServer,
     '--hostname', LOCALHOST,
   ]
 
-  if(config.shell)
-    argv = argv.concat('--command', config.shell, '--', config.shellArgs || [])
-
-  user.server = server = spawn(__dirname+'/chrootKexec.js', argv, {cwd: cwd})
-
-  var options =
-  {
-    target:
-    {
-      host: LOCALHOST,
-      port: parseInt(data.toString())
-    }
-  }
-
-  var proxy = createProxyServer(options)
+  var server = spawn(__dirname+'/chrootKexec.js', argv, {cwd: user.home})
 
   server.stdout.once('data', function(data)
   {
+    var options =
+    {
+      target:
+      {
+        host: LOCALHOST,
+        port: JSON.parse(data)
+      }
+    }
+
+    var proxy = createProxyServer(options)
     user.proxy = proxy
+
+    var name = user.name
 
     server.on('exit', function(code, signal)
     {
@@ -149,12 +145,47 @@ function startUserServer(user)
     proxy.on('error', function(error)
     {
       delete users[name]
-      server.kill('SIGTERM')
+      server.kill()
     })
   })
 
   return server
 }
+
+function checkOutput(server, callback)
+{
+  function disconnect()
+  {
+    server.removeListener('error', onError)
+    server.removeListener('exit' , onExit )
+
+    server.stdout.removeListener('data', onData)
+    server.stderr.unpipe(process.stderr)
+  }
+
+  function onError(error)
+  {
+    disconnect()
+    callback(error)
+  }
+  function onExit(code)
+  {
+    disconnect()
+    callback(new Error('Server exited before providing its port'))
+  }
+  function onData()
+  {
+    disconnect()
+    callback()
+  }
+
+  server.once('error', onError)
+  server.once('exit' , onExit )
+
+  server.stdout.once('data', onData)
+  server.stderr.pipe(process.stderr)
+}
+
 
 function getProxy(auth, callback)
 {
@@ -169,10 +200,10 @@ function getProxy(auth, callback)
     if(!server)
       user.server = server = startUserServer(user)
 
-    server.once('error', callback)
-    server.stdout.once('data', function()
+    // Check execution of server
+    checkOutput(server, function(error)
     {
-      server.removeListener('error', callback)
+      if(error) return callback(error)
 
       callback(null, user.proxy)
     })
