@@ -11,6 +11,7 @@
   "license": "ISC",
   "dependencies": {
     "basic-auth": "^1.0.3",
+    "concat-stream": "^1.5.1",
     "finalhandler": "^0.4.1",
     "http-proxy": "^1.13.2",
     "kexec": "^2.0.2",

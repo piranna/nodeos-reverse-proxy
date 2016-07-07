@@ -7,6 +7,7 @@ var spawn  = require('child_process').spawn
 var stat   = require('fs').stat
 
 var basicAuth         = require('basic-auth')
+var concat            = require('concat-stream')
 var createProxyServer = require('http-proxy').createProxyServer
 var finalhandler      = require('finalhandler')
 
@@ -211,6 +212,92 @@ function getProxy(auth, callback)
 }
 
 
+const domains = {}
+const ports   = {}
+
+function register(req, res)
+{
+  if(req.headers.host !== '127.0.0.0') return finalhandler(req, res)(403)
+
+  req.pipe(concat(function(data)
+  {
+    data = JSON.parse(data)
+
+    const port = data.port
+    if(!port) return finalhandler(req, res)(422)
+
+    const domain = data.domain
+    const externalPort = data.externalPort
+    if(domain)
+    {
+      var entry = domains[domain]
+      if(!entry)
+        domains[domain] = entry =
+        {
+          token: uuid(),
+          port: port
+        }
+      else if(entry.token !== data.token) return finalhandler(req, res)(422)
+
+      entry.domain = domain
+      res.end(token)
+    }
+    else if(externalPort)
+    {
+      var entry = ports[externalPort]
+      if(!entry)
+        ports[externalPort] = entry =
+        {
+          token: uuid(),
+          port: port
+        }
+      else if(entry.token !== data.token) return finalhandler(req, res)(422)
+
+      entry.externalPort = externalPort
+      res.end(token)
+    }
+    else return finalhandler(req, res)(422)
+  }))
+}
+
+function unregister(req, res)
+{
+  if(req.headers.host !== '127.0.0.0') return finalhandler(req, res)(403)
+
+  req.pipe(concat(function(data)
+  {
+    data = JSON.parse(data)
+
+    const port = data.port
+    if(!port) return finalhandler(req, res)(422)
+
+    const domain = data.domain
+    const externalPort = data.externalPort
+    if(domain)
+    {
+      var entry = domains[domain]
+      if(!entry) return res.end()
+
+      if(entry.token !== data.token) return finalhandler(req, res)(422)
+
+      delete domains[domain]
+      res.end()
+    }
+    else if(externalPort)
+    {
+      var entry = ports[externalPort]
+      if(!entry) return res.end()
+
+      if(entry.token !== data.token) return finalhandler(req, res)(422)
+
+      delete ports[externalPort]
+      res.end()
+    }
+    else return finalhandler(req, res)(422)
+  }))
+}
+
+
 // Create server to lister for HTTP and WebSockets connections
 var server = http.createServer()
 
@@ -218,6 +305,10 @@ var server = http.createServer()
 // HTTP
 server.on('request', function(req, res)
 {
+  // Inspired by https://github.com/softek/dynamic-reverse-proxy#with-code
+  if(req.url === '/_register'  ) return   register(req, res)
+  if(req.url === '/_unregister') return unregister(req, res)
+
   var auth = getAuth(req)
   if(!auth || !auth.name)
   {
