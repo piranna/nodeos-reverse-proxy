@@ -217,14 +217,16 @@ const ports   = {}
 
 function register(req, res)
 {
-  if(req.headers.host !== '127.0.0.0') return finalhandler(req, res)(403)
+  const final = finalhandler(req, res)
+
+  if(req.headers.host !== '127.0.0.0') return final(403)
 
   req.pipe(concat(function(data)
   {
     data = JSON.parse(data)
 
     const port = data.port
-    if(!port) return finalhandler(req, res)(422)
+    if(!port) return final(422)
 
     const domain = data.domain
     const externalPort = data.externalPort
@@ -237,13 +239,16 @@ function register(req, res)
           token: uuid(),
           port: port
         }
-      else if(entry.token !== data.token) return finalhandler(req, res)(422)
+      else if(entry.token !== data.token) return final(422)
 
       entry.domain = domain
       res.end(token)
     }
     else if(externalPort)
     {
+      // Don't register unpriviledged ports since they van be used directly
+      if(externalPort >= 1024) return final(422)
+
       var entry = ports[externalPort]
       if(!entry)
         ports[externalPort] = entry =
@@ -251,25 +256,27 @@ function register(req, res)
           token: uuid(),
           port: port
         }
-      else if(entry.token !== data.token) return finalhandler(req, res)(422)
+      else if(entry.token !== data.token) return final(422)
 
       entry.externalPort = externalPort
       res.end(token)
     }
-    else return finalhandler(req, res)(422)
+    else return final(422)
   }))
 }
 
 function unregister(req, res)
 {
-  if(req.headers.host !== '127.0.0.0') return finalhandler(req, res)(403)
+  const final = finalhandler(req, res)
+
+  if(req.headers.host !== '127.0.0.0') return final(403)
 
   req.pipe(concat(function(data)
   {
     data = JSON.parse(data)
 
     const port = data.port
-    if(!port) return finalhandler(req, res)(422)
+    if(!port) return final(422)
 
     const domain = data.domain
     const externalPort = data.externalPort
@@ -278,7 +285,7 @@ function unregister(req, res)
       var entry = domains[domain]
       if(!entry) return res.end()
 
-      if(entry.token !== data.token) return finalhandler(req, res)(422)
+      if(entry.token !== data.token) return final(422)
 
       delete domains[domain]
       res.end()
@@ -288,12 +295,12 @@ function unregister(req, res)
       var entry = ports[externalPort]
       if(!entry) return res.end()
 
-      if(entry.token !== data.token) return finalhandler(req, res)(422)
+      if(entry.token !== data.token) return final(422)
 
       delete ports[externalPort]
       res.end()
     }
-    else return finalhandler(req, res)(422)
+    else return final(422)
   }))
 }
 
