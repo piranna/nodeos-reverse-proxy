@@ -290,7 +290,12 @@ function register(req, res)
     if(externalPort)
     {
       // Don't register unpriviledged ports since they can be used directly
-      if(externalPort >= 1024) return final(422)
+      if(externalPort >= 1024)
+      {
+        const err = new SyntaxError('Unpriviledged ports are not allowed')
+              err.statusCode = 422
+        return final(err)
+      }
 
       var entry = ports[externalPort]
       if(!entry)
