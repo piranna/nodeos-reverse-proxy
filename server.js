@@ -2,8 +2,10 @@
 
 const http = require('http')
 
-const reverseProxy = require('.')
+const ReverseProxy = require('.')
 
+
+const reverseProxy = ReverseProxy()
 
 // Create server to lister for HTTP and WebSockets connections
 var server = http.createServer()

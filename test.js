@@ -1,11 +1,12 @@
 'use strict'
 
-const assert       = require('assert')
-const createServer = require('http').createServer
+const assert = require('assert')
+const http   = require('http')
+const net    = require('net')
 
 const request = require('supertest')
 
-const reverseProxy = require('.')
+const ReverseProxy = require('.')
 
 
 describe('registration', function()
@@ -18,7 +19,7 @@ describe('registration', function()
       port: 1234
     }
 
-    request(reverseProxy.onRequest)
+    request(ReverseProxy().onRequest)
       .post('/_register')
       .send(fixture)
       .expect(422, function(err, res)
@@ -38,7 +39,7 @@ describe('registration', function()
       const domain   = 'example.com'
       const expected = 'asdf'
 
-      createServer(function(req, res)
+      http.createServer(function(req, res)
       {
         assert.strictEqual(req.headers.host.split(':')[0], domain)
 
@@ -55,7 +56,7 @@ describe('registration', function()
           port: port
         }
 
-        const onRequest = request(reverseProxy.onRequest)
+        const onRequest = request(ReverseProxy().onRequest)
 
         onRequest
         .post('/_register')
@@ -103,32 +104,85 @@ describe('registration', function()
         port: 5678
       }
 
-      request(reverseProxy.onRequest)
+      request(ReverseProxy().onRequest)
       .post('/_register')
       .send(fixture)
       .expect(422, done)
     })
 
-    xit('register a TCP port, proxy a request and unregister it', function(done)
+    it("External and local ports can't be equal", function(done)
     {
+      const port = 1234
+
       const fixture =
       {
-        externalPort: 1234,
+        externalPort: port,
         pid: process.pid,
-        port: 1234,
-        type: 'tcp'
+        port: port
       }
 
-      request(reverseProxy.onRequest)
+      request(ReverseProxy(true).onRequest)
       .post('/_register')
       .send(fixture)
-      .expect(200, function(err, res)
+      .expect(422, done)
+    })
+
+    it('register a TCP port, proxy a request and unregister it', function(done)
+    {
+      const expected = 'asdf'
+
+      net.createServer(function(socket)
       {
-        if(err) return done(err)
+        socket.end(expected)
+      })
+      .on('error', done)
+      .listen(function()
+      {
+        const port = this.address().port
 
-        assert.notStrictEqual(res.text, '')
+        const externalPort = 1234
+        const fixture =
+        {
+          externalPort: externalPort,
+          pid: process.pid,
+          port: port,
+          type: 'tcp'
+        }
 
-        done()
+        const onRequest = request(ReverseProxy(true).onRequest)
+
+        onRequest
+        .post('/_register')
+        .send(fixture)
+        .expect(200, function(err, res)
+        {
+          if(err) return done(err)
+
+          const token = res.text
+
+          assert.notStrictEqual(token, '')
+
+          net.connect(externalPort)
+          .on('error', done)
+          .on('data', function(data)
+          {
+            assert.strictEqual(data.toString(), expected)
+          })
+          .on('end', function()
+          {
+            const fixture =
+            {
+              externalPort: externalPort,
+              pid: process.pid,
+              token: token
+            }
+
+            onRequest
+            .post('/_unregister')
+            .send(fixture)
+            .expect(200, '', done)
+          })
+        })
       })
     })
   })

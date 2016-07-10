@@ -212,274 +212,291 @@ function getProxy(auth, callback)
 }
 
 
-const domains = {}
-const ports   = {}
-
-setInterval(function()
+function ReverseProxy(allowUnpriviledgedPorts)
 {
-  for(var domain in domains)
-    fs.access('/proc/'+domains[domain].pid, function(error)
-    {
-      if(!error) return
-      if(error.code !== 'ENOENT') throw error
+  if(!(this instanceof ReverseProxy))
+    return new ReverseProxy(allowUnpriviledgedPorts)
 
-      domains[domain].proxy.close()
-      delete domains[domain]
-    })
 
-  for(var port in ports)
-    fs.access('/proc/'+ports[port].pid, function(error)
-    {
-      if(!error) return
-      if(error.code !== 'ENOENT') throw error
+  const domains = {}
+  const ports   = {}
 
-      ports[port].server.close()
-      delete ports[port]
-    })
-}, 1000)
-
-function register(req, res)
-{
-  const final = finalhandler(req, res)
-
-  req.pipe(concat(function(data)
+  setInterval(function()
   {
-    data = JSON.parse(data)
+    for(var domain in domains)
+      fs.access('/proc/'+domains[domain].pid, function(error)
+      {
+        if(!error) return
+        if(error.code !== 'ENOENT') throw error
 
-    const pid  = data.pid
-    const port = data.port
-    if(!pid || !port) return final(422)
+        domains[domain].proxy.close()
+        delete domains[domain]
+      })
 
+    for(var port in ports)
+      fs.access('/proc/'+ports[port].pid, function(error)
+      {
+        if(!error) return
+        if(error.code !== 'ENOENT') throw error
 
-    // Domain
+        ports[port].server.close()
+        delete ports[port]
+      })
+  }, 1000)
 
-    const domain = data.domain
-    if(domain)
+  function register(req, res)
+  {
+    const final = finalhandler(req, res)
+
+    req.pipe(concat(function(data)
     {
-      var entry = domains[domain]
-      if(!entry)
-        domains[domain] = entry =
-        {
-          token: uuid(),
-          port: port
-        }
-      else if(entry.token  !== data.token) return final(422)
-      else if(entry.domain === domain) return res.end()
+      data = JSON.parse(data)
 
-      var options =
+      const pid  = data.pid
+      const port = data.port
+      if(!pid || !port) return final(422)
+
+
+      // Domain
+
+      const domain = data.domain
+      if(domain)
       {
-        target:
-        {
-          host: LOCALHOST,
-          port: port
-        }
-      }
-      const proxy = createProxyServer(options)
-
-      if(entry.proxy) entry.proxy.close()
-      entry.proxy = proxy
-      entry.domain = domain
-
-      return res.end(entry.token)
-    }
-
-
-    // Port
-
-    const externalPort = data.externalPort
-    if(externalPort)
-    {
-      // Don't register unpriviledged ports since they can be used directly
-      if(externalPort >= 1024)
-      {
-        const err = new SyntaxError('Unpriviledged ports are not allowed')
-              err.statusCode = 422
-        return final(err)
-      }
-
-      var entry = ports[externalPort]
-      if(!entry)
-        ports[externalPort] = entry =
-        {
-          token: uuid(),
-          port: port
-        }
-      else if(entry.token        !== data.token  ) return final(422)
-      else if(entry.externalPort === externalPort) return res.end()
-
-      const type = data.type
-      var server
-      switch(type)
-      {
-        case 'tcp':
-          server = net.createServer(function(socket)
+        var entry = domains[domain]
+        if(!entry)
+          domains[domain] = entry =
           {
-            const client = net.connect(port, LOCALHOST)
-            .on('close', socket.close.bind(socket))
-
-            // Probably this is not needed, but doesn't hurts...
-            this.on('close', client.close.bind(client))
-
-            socket.pipe(client).pipe(socket)
-            .on('close', client.close.bind(client))
-          })
-          .listen(externalPort)
-        break
-
-        case 'udp4':
-        case 'udp6':
-          const options =
-          {
-            type: type,
-            reuseAddr: true
+            token: uuid(),
+            port: port
           }
+        else if(entry.token  !== data.token) return final(422)
+        else if(entry.domain === domain) return res.end()
 
-          server = dgram.createSocket(options, function(msg, rinfo)
+        var options =
+        {
+          target:
           {
-            const client = dgram.createSocket(type)
-            .on('message', function(msg)
-            {
-              server.send(msg, rinfo.port, rinfo.address)
-            })
+            host: LOCALHOST,
+            port: port
+          }
+        }
+        const proxy = createProxyServer(options)
 
-            // [ToDo] When could we able to close the UDP sockets beside When
-            // the server exits?
-            this.on('close', client.close.bind(client))
+        if(entry.proxy) entry.proxy.close()
+        entry.proxy = proxy
+        entry.domain = domain
 
-            client.send(msg, port, LOCALHOST)
-          })
-          .bind(externalPort)
-        break
-
-        default: return final(422)
+        return res.end(entry.token)
       }
 
-      if(entry.server) entry.server.close()
-      entry.server = server
-      entry.externalPort = externalPort
 
-      return server.on('listening', res.end.bind(res, entry.token))
+      // Port
+
+      const externalPort = data.externalPort
+      if(externalPort)
+      {
+        // Don't register unpriviledged ports since they can be used directly
+        if(!allowUnpriviledgedPorts && externalPort >= 1024)
+        {
+          const err = new SyntaxError('Unpriviledged ports are not allowed')
+                err.statusCode = 422
+          return final(err)
+        }
+
+        if(externalPort === port)
+        {
+          const err = new SyntaxError("External and local ports can't be equal")
+                err.statusCode = 422
+          return final(err)
+        }
+
+        var entry = ports[externalPort]
+        if(!entry)
+          ports[externalPort] = entry =
+          {
+            token: uuid(),
+            port: port
+          }
+        else if(entry.token        !== data.token  ) return final(422)
+        else if(entry.externalPort === externalPort) return res.end()
+
+        const type = data.type
+        var server
+        switch(type)
+        {
+          case 'tcp':
+            server = net.createServer(function(socket)
+            {
+              const client = net.connect(port, LOCALHOST)
+              .on('close', function()
+              {
+                socket.end()
+              })
+
+              const client_end = function(){client.end()}
+
+              // Probably this is not needed, but doesn't hurts...
+              this.on('close', client_end)
+
+              socket.pipe(client).pipe(socket).on('close', client_end)
+            })
+            .listen(externalPort)
+          break
+
+          case 'udp4':
+          case 'udp6':
+            const options =
+            {
+              type: type,
+              reuseAddr: true
+            }
+
+            server = dgram.createSocket(options, function(msg, rinfo)
+            {
+              const client = dgram.createSocket(type)
+              .on('message', function(msg)
+              {
+                server.send(msg, rinfo.port, rinfo.address)
+              })
+
+              // [ToDo] When could we able to close the UDP sockets beside When
+              // the server exits?
+              this.on('close', client.close.bind(client))
+
+              client.send(msg, port, LOCALHOST)
+            })
+            .bind(externalPort)
+          break
+
+          default: return final(422)
+        }
+
+        if(entry.server) entry.server.close()
+        entry.server = server
+        entry.externalPort = externalPort
+
+        return server.on('listening', res.end.bind(res, entry.token))
+      }
+
+
+      // No domain or port
+
+      const err = new SyntaxError('No `domain` or `externalPort` are set')
+            err.statusCode = 422
+      final(err)
+    }))
+  }
+
+  function unregister(req, res)
+  {
+    const final = finalhandler(req, res)
+
+    req.pipe(concat(function(data)
+    {
+      data = JSON.parse(data)
+
+      const pid = data.pid
+      if(!pid) return final(422)
+
+
+      // Domain
+
+      const domain = data.domain
+      if(domain)
+      {
+        var entry = domains[domain]
+        if(!entry) return res.end()
+
+        if(entry.token !== data.token) return final(422)
+
+        domains[domain].proxy.close()
+        delete domains[domain]
+        return res.end()
+      }
+
+
+      // Port
+
+      const externalPort = data.externalPort
+      if(externalPort)
+      {
+        var entry = ports[externalPort]
+        if(!entry) return res.end()
+
+        if(entry.token !== data.token) return final(422)
+
+        ports[externalPort].server.close()
+        delete ports[externalPort]
+        return res.end()
+      }
+
+
+      // No domain or port
+
+      final(422)
+    }))
+  }
+
+
+  //
+  // Public API
+  //
+
+  this.onRequest = function(req, res)
+  {
+    const final = finalhandler(req, res)
+
+    const host = req.headers.host.split(':')[0]
+
+    // Inspired by https://github.com/softek/dynamic-reverse-proxy#with-code
+    if(host === LOCALHOST)
+    {
+      if(req.url === '/_register'  ) return   register(req, res)
+      if(req.url === '/_unregister') return unregister(req, res)
+
+      return final(403)
     }
 
+    for(var domain in domains)
+      if(domain === host)
+        return domains[domain].proxy.web(req, res)
 
-    // No domain or port
-
-    const err = new SyntaxError('No `domain` or `externalPort` are set')
-          err.statusCode = 422
-    final(err)
-  }))
-}
-
-function unregister(req, res)
-{
-  const final = finalhandler(req, res)
-
-  req.pipe(concat(function(data)
-  {
-    data = JSON.parse(data)
-
-    const pid = data.pid
-    if(!pid) return final(422)
-
-
-    // Domain
-
-    const domain = data.domain
-    if(domain)
+    var auth = getAuth(req)
+    if(!auth || !auth.name)
     {
-      var entry = domains[domain]
-      if(!entry) return res.end()
+      res.statusCode = 401
+      res.setHeader('WWW-Authenticate', 'Basic realm="Welcome to NodeOS!"')
 
-      if(entry.token !== data.token) return final(422)
-
-      domains[domain].proxy.close()
-      delete domains[domain]
       return res.end()
     }
 
-
-    // Port
-
-    const externalPort = data.externalPort
-    if(externalPort)
+    getProxy(auth, function(error, proxy)
     {
-      var entry = ports[externalPort]
-      if(!entry) return res.end()
+      if(error) return final(error)
 
-      if(entry.token !== data.token) return final(422)
-
-      ports[externalPort].server.close()
-      delete ports[externalPort]
-      return res.end()
-    }
-
-
-    // No domain or port
-
-    final(422)
-  }))
-}
-
-
-//
-// Public API
-//
-
-function onRequest(req, res)
-{
-  const final = finalhandler(req, res)
-
-  const host = req.headers.host.split(':')[0]
-
-  // Inspired by https://github.com/softek/dynamic-reverse-proxy#with-code
-  if(host === LOCALHOST)
-  {
-    if(req.url === '/_register'  ) return   register(req, res)
-    if(req.url === '/_unregister') return unregister(req, res)
-
-    return final(403)
+      proxy.web(req, res)
+    })
   }
 
-  for(var domain in domains)
-    if(domain === host)
-      return domains[domain].proxy.web(req, res)
-
-  var auth = getAuth(req)
-  if(!auth || !auth.name)
+  this.onUpgrade = function(req, socket, head)
   {
-    res.statusCode = 401
-    res.setHeader('WWW-Authenticate', 'Basic realm="Welcome to NodeOS!"')
+    for(var domain in domains)
+      if(domain === host)
+        return domains[domain].proxy.ws(req, socket, head)
 
-    return res.end()
+    var end = socket.end.bind(socket)
+
+    var auth = getAuth(req)
+    if(!auth || !auth.name) return end()
+
+    getProxy(auth, function(error, proxy)
+    {
+      if(error) return end(error)
+
+      proxy.ws(req, socket, head)
+    })
   }
-
-  getProxy(auth, function(error, proxy)
-  {
-    if(error) return final(error)
-
-    proxy.web(req, res)
-  })
-}
-
-function onUpgrade(req, socket, head)
-{
-  for(var domain in domains)
-    if(domain === host)
-      return domains[domain].proxy.ws(req, socket, head)
-
-  var end = socket.end.bind(socket)
-
-  var auth = getAuth(req)
-  if(!auth || !auth.name) return end()
-
-  getProxy(auth, function(error, proxy)
-  {
-    if(error) return end(error)
-
-    proxy.ws(req, socket, head)
-  })
 }
 
 
-exports.onRequest = onRequest
-exports.onUpgrade = onUpgrade
+module.exports = ReverseProxy
