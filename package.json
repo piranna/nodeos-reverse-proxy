@@ -2,7 +2,7 @@
   "name": "nodeos-reverse-proxy",
   "version": "0.1.0",
   "description": "Reverse proxy based on users names",
-  "main": "server.js",
+  "main": "index.js",
   "bin": "server.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
