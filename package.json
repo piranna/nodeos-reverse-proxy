@@ -10,12 +10,12 @@
   "author": "Jesús Leganés Combarro 'piranna' <piranna@gmail.com>",
   "license": "ISC",
   "dependencies": {
-    "basic-auth": "^1.0.3",
+    "basic-auth": "^1.0.4",
     "concat-stream": "^1.5.1",
-    "finalhandler": "^0.4.1",
-    "http-proxy": "^1.13.2",
+    "finalhandler": "^0.5.0",
+    "http-proxy": "^1.14.0",
     "kexec": "^2.0.2",
-    "posix": "^4.0.0",
+    "posix": "^4.0.2",
     "uuid": "^2.0.2"
   },
   "devDependencies": {
