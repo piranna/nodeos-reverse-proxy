@@ -233,14 +233,14 @@ function ReverseProxy(allowUnpriviledgedPorts)
         delete domains[domain]
       })
 
-    for(var port in ports)
-      fs.access('/proc/'+ports[port].pid, function(error)
+    for(var key in ports)
+      fs.access('/proc/'+ports[key].pid, function(error)
       {
         if(!error) return
         if(error.code !== 'ENOENT') throw error
 
-        ports[port].server.close()
-        delete ports[port]
+        ports[key].server.close()
+        delete ports[key]
       })
   }, 1000)
 
@@ -310,9 +310,13 @@ function ReverseProxy(allowUnpriviledgedPorts)
           return final(err)
         }
 
-        var entry = ports[externalPort]
+        const type = data.type
+        if(!type) return final(422)
+
+        const key = type+':'+externalPort
+        var entry = ports[key]
         if(!entry)
-          ports[externalPort] = entry =
+          ports[key] = entry =
           {
             token: uuid(),
             port: port
@@ -420,13 +424,17 @@ function ReverseProxy(allowUnpriviledgedPorts)
       const externalPort = data.externalPort
       if(externalPort)
       {
-        var entry = ports[externalPort]
+        const type = data.type
+        if(!type) return final(422)
+
+        const key = type+':'+externalPort
+        var entry = ports[key]
         if(!entry) return res.end()
 
         if(entry.token !== data.token) return final(422)
 
-        ports[externalPort].server.close()
-        delete ports[externalPort]
+        ports[key].server.close()
+        delete ports[key]
         return res.end()
       }
 
