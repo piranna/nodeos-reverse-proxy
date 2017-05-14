@@ -17,6 +17,7 @@
     "kexec": "^2.0.2",
     "posix": "^4.0.2",
     "uuid": "^2.0.2"
+    "http-errors": "^1.6.1",
   },
   "devDependencies": {
     "mocha": "^2.5.3",

@@ -1,17 +1,18 @@
 'use strict'
 
-var crypto = require('crypto')
-var dgram  = require('dgram')
-var fs     = require('fs')
-var net    = require('net')
-var parse  = require('url').parse
-var spawn  = require('child_process').spawn
+const crypto = require('crypto')
+const dgram  = require('dgram')
+const fs     = require('fs')
+const net    = require('net')
+const parse  = require('url').parse
+const spawn  = require('child_process').spawn
 
-var basicAuth         = require('basic-auth')
-var concat            = require('concat-stream')
-var createProxyServer = require('http-proxy').createProxyServer
-var finalhandler      = require('finalhandler')
-var uuid              = require('uuid').v4
+const basicAuth         = require('basic-auth')
+const concat            = require('concat-stream')
+const createError       = require('http-errors')
+const createProxyServer = require('http-proxy').createProxyServer
+const finalhandler      = require('finalhandler')
+const uuid              = require('uuid').v4
 
 
 const LOCALHOST = '127.0.0.1'
@@ -254,7 +255,7 @@ function ReverseProxy(allowUnpriviledgedPorts)
 
       const pid  = data.pid
       const port = data.port
-      if(!pid || !port) return final(422)
+      if(!pid || !port) return final(createError(422))
 
 
       // Domain
@@ -269,7 +270,7 @@ function ReverseProxy(allowUnpriviledgedPorts)
             token: uuid(),
             port: port
           }
-        else if(entry.token  !== data.token) return final(422)
+        else if(entry.token  !== data.token) return final(createError(422))
         else if(entry.domain === domain) return res.end()
 
         var options =
@@ -311,7 +312,7 @@ function ReverseProxy(allowUnpriviledgedPorts)
         }
 
         const type = data.type
-        if(!type) return final(422)
+        if(!type) return final(createError(422))
 
         const key = type+':'+externalPort
         var entry = ports[key]
@@ -321,10 +322,9 @@ function ReverseProxy(allowUnpriviledgedPorts)
             token: uuid(),
             port: port
           }
-        else if(entry.token        !== data.token  ) return final(422)
+        else if(entry.token !== data.token) return final(createError(422))
         else if(entry.externalPort === externalPort) return res.end()
 
-        const type = data.type
         var server
         switch(type)
         {
@@ -372,7 +372,7 @@ function ReverseProxy(allowUnpriviledgedPorts)
             .bind(externalPort)
           break
 
-          default: return final(422)
+          default: return final(createError(422))
         }
 
         if(entry.server) entry.server.close()
@@ -400,7 +400,7 @@ function ReverseProxy(allowUnpriviledgedPorts)
       data = JSON.parse(data)
 
       const pid = data.pid
-      if(!pid) return final(422)
+      if(!pid) return final(createError(422))
 
 
       // Domain
@@ -411,7 +411,7 @@ function ReverseProxy(allowUnpriviledgedPorts)
         var entry = domains[domain]
         if(!entry) return res.end()
 
-        if(entry.token !== data.token) return final(422)
+        if(entry.token !== data.token) return final(createError(422))
 
         domains[domain].proxy.close()
         delete domains[domain]
@@ -425,13 +425,14 @@ function ReverseProxy(allowUnpriviledgedPorts)
       if(externalPort)
       {
         const type = data.type
-        if(!type) return final(422)
+        console.log(data, ports)
+        if(!type) return final(createError(422))
 
         const key = type+':'+externalPort
         var entry = ports[key]
         if(!entry) return res.end()
 
-        if(entry.token !== data.token) return final(422)
+        if(entry.token !== data.token) return final(createError(422))
 
         ports[key].server.close()
         delete ports[key]
@@ -441,7 +442,7 @@ function ReverseProxy(allowUnpriviledgedPorts)
 
       // No domain or port
 
-      final(422)
+      final(createError(422))
     }))
   }
 
@@ -462,7 +463,7 @@ function ReverseProxy(allowUnpriviledgedPorts)
       if(req.url === '/_register'  ) return   register(req, res)
       if(req.url === '/_unregister') return unregister(req, res)
 
-      return final(403)
+      return final(createError(403))
     }
 
     for(var domain in domains)

@@ -174,6 +174,7 @@ describe('registration', function()
             {
               externalPort: externalPort,
               pid: process.pid,
+              type: 'tcp',
               token: token
             }
 
